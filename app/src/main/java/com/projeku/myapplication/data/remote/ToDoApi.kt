@@ -1,9 +1,15 @@
 package com.projeku.myapplication.data.remote
 
-import com.projeku.myapplication.domain.model.ToDo
 import retrofit2.http.GET
+
+data class ToDoDto(
+    val userId: Int,
+    val id: Int,
+    val title: String,
+    val completed: Boolean
+)
 
 interface ToDoApi {
     @GET("todos")
-    suspend fun getTodos(): List<ToDo>
+    suspend fun getToDos(): List<ToDoDto>
 }

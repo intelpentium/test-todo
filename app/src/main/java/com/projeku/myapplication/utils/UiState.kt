@@ -1,8 +1,10 @@
 package com.projeku.myapplication.utils
 
-sealed class UiState<out T> {
-    data object Loading : UiState<Nothing>()
-    data class Success<out T>(val data: T) : UiState<T>()
-    data class Error(val message: String): UiState<Nothing>()
-    data object Offline: UiState<Nothing>()
+import com.projeku.myapplication.domain.model.ToDo
+
+sealed class UiState {
+    object Loading : UiState()
+    data class Success(val data: List<ToDo>) : UiState()
+    data class Error(val message: String) : UiState()
+    data class Offline(val cached: List<ToDo>) : UiState()
 }

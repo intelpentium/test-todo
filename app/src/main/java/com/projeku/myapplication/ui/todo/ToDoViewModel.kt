@@ -4,62 +4,96 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.projeku.myapplication.domain.model.ToDo
 import com.projeku.myapplication.domain.repository.ToDoRepository
+import com.projeku.myapplication.domain.usecase.GetToDoListUseCase
 import com.projeku.myapplication.utils.UiState
-import dagger.hilt.android.HiltAndroidApp
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-@HiltAndroidApp
+@HiltViewModel
 class ToDoViewModel @Inject constructor(
-    private val repo: ToDoRepository
+    private val getToDoListUseCase: GetToDoListUseCase,
+    private val repository: ToDoRepository
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<UiState<List<ToDo>>>(UiState.Loading)
-    val state: StateFlow<UiState<List<ToDo>>> = _state
+    private val _uiState = MutableStateFlow<UiState>(UiState.Loading)
+    val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    private var observeJob: Job? = null
 
     init {
-        observe()
-        refresh()
+        observeToDos()
+        refreshFromApiIfNeeded()
     }
 
-    private fun observe() {
-        viewModelScope.launch {
-            repo.observeTodos()
-                .onStart {
-                    if (repo.simulateOffline) _state.value = UiState.Offline
-                }
-                .catch { e ->
-                    _state.value = UiState.Error(e.message ?: "Error")
-
-                }
-                .collect { list ->
-                    _state.value = UiState.Success(list)
-                }
-        }
-    }
-
-    fun refresh() {
-        viewModelScope.launch {
-            try {
-                if (repo.simulateOffline) {
-                    _state.value = UiState.Offline
+    private fun observeToDos() {
+        observeJob?.cancel()
+        observeJob = getToDoListUseCase()
+            .onStart { _uiState.value = UiState.Loading }
+            .catch { e ->
+                _uiState.value = UiState.Error(e.message ?: "Unknown error")
+            }
+            .onEach { list ->
+                if (list.isEmpty()) {
+                    if (repository.simulateOffline) {
+                        _uiState.value = UiState.Offline(list)
+                    } else {
+                        _uiState.value = UiState.Success(list)
+                    }
                 } else {
-                    _state.value = UiState.Loading
-                    repo.refreshFromRemote()
+                    if (repository.simulateOffline) {
+                        _uiState.value = UiState.Offline(list)
+                    } else {
+                        _uiState.value = UiState.Success(list)
+                    }
                 }
-            } catch (e: Exception) {
-                _state.value = UiState.Error(e.message ?: "Refresh Failed")
+            }
+            .launchIn(viewModelScope)
+    }
+
+    fun refreshFromApi() {
+        viewModelScope.launch {
+            _uiState.value = UiState.Loading
+            val res = repository.fetchToDosFromApiAndCache()
+            if (res.isSuccess) {
+            } else {
+                val message = res.exceptionOrNull()?.message ?: "Failed to fetch"
+                getToDoListUseCase().firstOrNull()?.let { cached ->
+                    if (cached.isNotEmpty()) {
+                        _uiState.value = UiState.Error("$message — showing cached data")
+                    } else {
+                        _uiState.value = UiState.Error(message)
+                    }
+                } ?: run {
+                    _uiState.value = UiState.Error(message)
+                }
             }
         }
     }
 
-    fun toggle(todo: ToDo, checked: Boolean){
+    private fun refreshFromApiIfNeeded() {
+        if (!repository.simulateOffline) {
+            viewModelScope.launch {
+                val res = repository.fetchToDosFromApiAndCache()
+                if (res.isFailure) {
+                }
+            }
+        }
+    }
+
+    fun toggleCompleted(todo: ToDo) {
         viewModelScope.launch {
-            repo.updateLocal(todo.copy(completed = checked))
+            val updated = todo.copy(completed = !todo.completed)
+            repository.updateToDoLocal(updated)
         }
     }
 }
